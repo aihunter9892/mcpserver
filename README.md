@@ -125,18 +125,59 @@ python server.py --http
 
 Server is now at `http://localhost:8000/mcp`. Ship that same command in a container.
 
-### Option A — Render (easiest, free tier)
+### Option A — Render, no Docker (recommended)
 
-1. Push this folder to a GitHub repo.
-2. Render dashboard → **New → Web Service** → pick the repo.
-3. Render reads [`render.yaml`](render.yaml) and detects the Dockerfile.
-4. Add env var `GROQ_API_KEY` in the dashboard (it's marked `sync: false` so it is
-   never committed).
-5. Deploy. Your endpoint is `https://<your-app>.onrender.com/mcp`.
+Render has a **native Python runtime**. No Dockerfile, no container build. It installs
+`requirements.txt` and runs your start command directly. This is the fastest path from
+laptop to public URL.
 
-> Free-tier instances sleep after inactivity. First call after a sleep takes ~30s.
+**Step 1 — get the code on GitHub.**
 
-### Option B — Fly.io
+```bash
+git init && git add -A && git commit -m "MCP server"
+```
+
+Create an empty repo at [github.com/new](https://github.com/new), then:
+
+```bash
+git remote add origin https://github.com/<you>/llm-toolkit-mcp.git && git push -u origin main
+```
+
+**Step 2 — create the service.**
+
+Render dashboard → **New → Web Service** → connect the repo. Render reads
+[`render.yaml`](render.yaml) and configures itself:
+
+| Setting       | Value                          |
+|---------------|--------------------------------|
+| Runtime       | Python (not Docker)            |
+| Build command | `pip install -r requirements.txt` |
+| Start command | `python server.py --http`      |
+
+**Step 3 — set the key.** Dashboard → **Environment** → add `GROQ_API_KEY`. It's marked
+`sync: false` in `render.yaml`, so it lives only in the dashboard, never in git.
+
+**Step 4 — deploy.** Your public endpoint is `https://<your-app>.onrender.com/mcp`.
+
+> **No health check on purpose.** `GET /mcp` opens an SSE stream that stays open by
+> design. A health check pointed at it hangs, and Render reads the timeout as a dead
+> service and restart-loops it. With `healthCheckPath` omitted, Render just verifies
+> the process binds `$PORT` — the correct check for this server.
+
+> Free-tier instances sleep after ~15 min idle. The first call after a sleep takes
+> ~30–50s while it wakes. Some MCP clients time out before that and report the server
+> as broken. Warm it with a curl before class starts.
+
+### Option B — Other no-Docker hosts
+
+| Host                    | How                                                        |
+|-------------------------|------------------------------------------------------------|
+| **Railway**             | Connect repo. Nixpacks auto-detects Python. Set start command to `python server.py --http`. |
+| **Hugging Face Spaces** | Free, no sleep. Docker Space, or Gradio Space with a custom `app.py` shim. |
+| **Google Cloud Run**    | `gcloud run deploy --source .` — builds from source, no Dockerfile needed. |
+| **Any VPS**             | `pip install -r requirements.txt`, then run under systemd or `tmux`. |
+
+### Option C — Fly.io
 
 ```bash
 fly launch --no-deploy
@@ -152,9 +193,10 @@ fly deploy
 
 Endpoint: `https://<your-app>.fly.dev/mcp`
 
-### Option C — Any container host
+### Option D — Any container host
 
-The [`Dockerfile`](Dockerfile) is standard. Works on Railway, Cloud Run, ECS, a VPS:
+The [`Dockerfile`](Dockerfile) is kept for hosts that want a container. Works on
+Railway, Cloud Run, ECS, a VPS:
 
 ```bash
 docker build -t llm-toolkit-mcp .
@@ -180,7 +222,25 @@ You should get back a `serverInfo` block naming `llm-toolkit`.
 claude mcp add --transport http llm-toolkit https://your-app.onrender.com/mcp
 ```
 
----
+Students paste that one line and instantly have your four tools. That's the payoff
+moment of the whole workshop — no install, no key, no Python on their machine.
+
+### Sharing it publicly — read this first
+
+A deployed MCP server with no auth is **open to the entire internet**. Anyone who
+learns the URL can call your tools, and every call spends *your* Groq quota.
+
+For a workshop that is usually fine, and Groq's free tier is what makes it fine: when
+the quota runs out you get HTTP 429 errors, not a bill. The failure mode is "tools stop
+answering," not "surprise invoice."
+
+It stops being fine the moment you put a **paid** key behind it. Then add auth before
+sharing the URL — the MCP SDK's `auth` parameter, or an API gateway in front.
+
+Two habits worth keeping either way:
+
+- Treat the URL as semi-secret. Share it in class, don't post it publicly.
+- Rotate the key after the workshop. It's one dashboard click.
 
 ## Part 5 — Things worth teaching explicitly
 
