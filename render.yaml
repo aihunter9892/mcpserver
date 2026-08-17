@@ -1,0 +1,22 @@
+# Render deploy WITHOUT Docker - native Python runtime.
+# Render installs requirements.txt itself and runs the start command.
+# No Dockerfile involved. This is the simplest cloud path.
+#
+# NOTE: deliberately no healthCheckPath. GET /mcp opens a Server-Sent Events
+# stream that stays open by design, so a health check against it hangs and
+# Render would restart-loop the service. With no healthCheckPath, Render just
+# verifies the process binds $PORT, which is the correct check here.
+services:
+  - type: web
+    name: llm-toolkit-mcp
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py --http
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false          # set this in the Render dashboard, never in git
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: PYTHON_VERSION
+        value: "3.12.7"
