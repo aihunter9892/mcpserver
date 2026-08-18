@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest tests/ -q
+
+      - name: Verify server boots and lists its tools
+        env:
+          GROQ_API_KEY: gsk_ci_placeholder_not_a_real_key
+        run: |
+          python -c "
+          import server
+          names = sorted(t.__name__ for t in [server.ask_llm, server.summarize, server.translate, server.extract_json])
+          assert names == ['ask_llm', 'extract_json', 'summarize', 'translate'], names
+          print('boot OK, tools:', names)
+          "
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fail if a real API key was ever committed
+        run: |
+          if git grep -nE "(gsk_[A-Za-z0-9]{30,}|sk-ant-api03-[A-Za-z0-9_-]{40,})" $(git rev-list --all); then
+            echo "::error::A live API key is present in git history."
+            exit 1
+          fi
+          echo "No API keys found in history."

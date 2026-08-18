@@ -2,10 +2,9 @@
 # Render installs requirements.txt itself and runs the start command.
 # No Dockerfile involved. This is the simplest cloud path.
 #
-# NOTE: deliberately no healthCheckPath. GET /mcp opens a Server-Sent Events
-# stream that stays open by design, so a health check against it hangs and
-# Render would restart-loop the service. With no healthCheckPath, Render just
-# verifies the process binds $PORT, which is the correct check here.
+# healthCheckPath points at /health, a plain JSON endpoint.
+# Never point it at /mcp: that is a Server-Sent Events stream that stays open
+# by design, so the probe hangs and Render restart-loops the service.
 services:
   - type: web
     name: llm-toolkit-mcp
@@ -13,6 +12,7 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python server.py --http
+    healthCheckPath: /health
     envVars:
       - key: GROQ_API_KEY
         sync: false          # set this in the Render dashboard, never in git
@@ -20,3 +20,8 @@ services:
         value: openai/gpt-oss-120b
       - key: PYTHON_VERSION
         value: "3.12.7"
+      # Uncomment to require a bearer token on every request.
+      # - key: MCP_AUTH_TOKEN
+      #   sync: false
+      - key: RATE_LIMIT_PER_MIN
+        value: "30"

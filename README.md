@@ -317,6 +317,82 @@ real users. Worth saying out loud to the class.
 
 ---
 
+## Part 8 — What makes it production ready
+
+The workshop version and the production version differ in ways that have nothing to do
+with MCP. This is the list, and every item exists because of a failure that actually
+happened while building this server.
+
+### Protecting the key
+
+A public MCP endpoint is a public spending endpoint: every call costs *you*.
+
+| Guard | Env var | Default | Why |
+|---|---|---|---|
+| Bearer auth | `MCP_AUTH_TOKEN` | empty = open | Gate access once a paid key is behind it |
+| Rate limit | `RATE_LIMIT_PER_MIN` | 30/IP | One script cannot drain your quota |
+| Input cap | `MAX_INPUT_CHARS` | 20000 | A pasted novel is rejected before it costs tokens |
+| Body cap | `MAX_BODY_BYTES` | 1 MB | Oversized payloads die before parsing |
+
+Auth is **off by default** so the server stays open for a workshop on a free key. Turn
+it on before pointing a paid key at a public URL:
+
+```bash
+MCP_AUTH_TOKEN=$(python -c "import secrets;print(secrets.token_urlsafe(32))") python server.py --http
+```
+
+Clients then send `Authorization: Bearer <token>`.
+
+### Surviving the provider
+
+**Models get retired without notice.** Groq removed `llama-3.3-70b-versatile` during
+development — it worked at 07:15 and 404'd an hour later. Every tool broke at once,
+and a 404 reads like "your server is broken," not "the vendor moved."
+
+`MODEL_CHAIN` fixes this: on a model-not-found error the call rolls to the next model
+instead of failing. Other errors — a bad key, a rate limit — fail fast, because
+retrying those across five models just wastes time.
+
+Timeouts (`LLM_TIMEOUT_SECONDS`) and retries (`LLM_MAX_RETRIES`) are handed to the
+vendor SDKs, which already implement backoff correctly.
+
+### Health checks
+
+`/health` returns plain JSON. **Never health-check `/mcp`** — it is an SSE stream that
+stays open by design, so the probe hangs, the platform calls the service dead, and you
+get a restart loop that looks like a crash. This cost a real debugging cycle here.
+
+### Logging
+
+Everything goes to **stderr**, never stdout. In stdio mode stdout carries the JSON-RPC
+stream, so one stray `print()` corrupts the protocol. This is the most common way to
+break an MCP server while debugging it.
+
+The MCP-level middleware logs every method with its duration, and works for both
+transports.
+
+### Tests and CI
+
+`pytest tests/` runs offline with no API key and spends nothing. It covers the rate
+limiter's window expiry, input caps, model fallback, tool schema preservation, and
+config validation.
+
+GitHub Actions runs the suite on 3.11 and 3.12, boots the server, and **scans the full
+git history for committed API keys** — the failure that is unrecoverable, because a
+pushed key is public the moment it lands.
+
+### Known limits
+
+Worth being honest with a class about what is still missing:
+
+- **Rate limiting is per-process.** Scale to N instances and you allow N times the
+  limit. Swap in Redis before it matters.
+- **One shared token, not per-user keys.** Fine for a class, not for customers.
+- **No usage metering.** You cannot tell who spent what.
+- **Free-tier cold starts** still take 30–50s after idle.
+
+---
+
 ## File map
 
 | File                 | Why it exists                                  |
@@ -329,3 +405,6 @@ real users. Worth saying out loud to the class.
 | `.env.example`       | Which env vars exist                           |
 | `.mcp.json.example`  | Client config to copy                          |
 | `USING-IT.md`        | Standalone page to hand to users                |
+| `guards.py`          | Auth, rate limiting, size caps, logging         |
+| `tests/`             | Offline test suite, no API key needed           |
+| `.github/workflows/` | CI: tests, boot check, secret scan              |
