@@ -284,6 +284,39 @@ teach reading the installed package instead of trusting a blog post.
 
 ---
 
+## Part 7 — Getting other people to use it
+
+Handing the tools to someone else is three separate problems: **reachable**,
+**connectable**, **discoverable**. Solve them in that order.
+
+**1. Reachable.** A server on `localhost` is usable by exactly one person. Deploy it
+(Part 4) and you have a public URL. Nothing below works until this is done.
+
+**2. Connectable.** Give people [`USING-IT.md`](USING-IT.md) — a standalone page with
+copy-paste config for Claude Code, Claude Desktop, and Cursor, plus a troubleshooting
+table. For a workshop, the remote route is the one to use: students paste one line and
+have working tools with no Python, no repo, and no API key of their own.
+
+**3. Discoverable.** Only if you want strangers to find it, not just your class:
+
+| Channel | What it gets you |
+|---|---|
+| GitHub topics `mcp`, `mcp-server`, `model-context-protocol` | Free search traffic |
+| The official MCP registry | Listed in client "browse servers" UIs |
+| `awesome-mcp-servers` community lists | PR to add your repo |
+| Smithery / Glama and similar directories | Hosted install buttons |
+
+Registry requirements move quickly — check the current MCP registry docs for the
+manifest format before publishing.
+
+**A note on the honest ceiling.** People adopt an MCP server when it does something
+they cannot already do. This one wraps a generic LLM, which most clients already have
+built in — perfect for teaching the protocol, weak as a product. A server that reaches
+*your* database, *your* internal API, or *your* proprietary data is the one that gets
+real users. Worth saying out loud to the class.
+
+---
+
 ## File map
 
 | File                 | Why it exists                                  |
@@ -295,3 +328,4 @@ teach reading the installed package instead of trusting a blog post.
 | `fly.toml`           | Fly.io deploy                                  |
 | `.env.example`       | Which env vars exist                           |
 | `.mcp.json.example`  | Client config to copy                          |
+| `USING-IT.md`        | Standalone page to hand to users                |
