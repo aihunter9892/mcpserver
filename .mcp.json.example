@@ -5,7 +5,7 @@
       "args": ["/absolute/path/to/mcp-claude-server/server.py"],
       "env": {
         "GROQ_API_KEY": "gsk_your-key-here",
-        "GROQ_MODEL": "llama-3.3-70b-versatile"
+        "GROQ_MODEL": "openai/gpt-oss-120b"
       }
     }
   }

@@ -2,22 +2,25 @@
 LLM Toolkit MCP Server
 ======================
 A minimal-but-real MCP server that exposes an LLM API as MCP tools.
-Backed by Groq (fast, OpenAI-compatible, generous free tier).
+
+Ships with two interchangeable backends, picked at startup by $LLM_PROVIDER:
+  * groq       -> fast, free tier, OpenAI-compatible  (default)
+  * anthropic  -> Claude
 
 Runs in two transports:
   * stdio  -> for local clients (Claude Desktop, Claude Code, Cursor)
   * http   -> for remote deployment (Render, Railway, Fly.io, any container host)
 
 Usage:
-    python server.py              # stdio (default)
-    python server.py --http       # streamable HTTP on 0.0.0.0:$PORT
+    python server.py                          # stdio, Groq
+    python server.py --http                   # streamable HTTP on 0.0.0.0:$PORT
+    LLM_PROVIDER=anthropic python server.py   # same tools, Claude behind them
 """
 
 import os
 import sys
 
 from dotenv import load_dotenv
-from groq import Groq, GroqError
 from mcp.server.mcpserver import MCPServer
 
 # Load .env sitting next to this file, so the server works no matter which
@@ -26,48 +29,99 @@ from mcp.server.mcpserver import MCPServer
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # ---------------------------------------------------------------------------
-# 1. Config
+# 1. Config - everything provider-specific is declared in this one table
 # ---------------------------------------------------------------------------
 
-MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-API_KEY = os.environ.get("GROQ_API_KEY")
+PROVIDERS = {
+    "groq": {
+        "key_var": "GROQ_API_KEY",
+        "model_var": "GROQ_MODEL",
+        "default_model": "openai/gpt-oss-120b",
+    },
+    "anthropic": {
+        "key_var": "ANTHROPIC_API_KEY",
+        "model_var": "ANTHROPIC_MODEL",
+        "default_model": "claude-sonnet-5",
+    },
+}
 
-if not API_KEY:
-    print("ERROR: GROQ_API_KEY is not set.", file=sys.stderr)
+PROVIDER = os.environ.get("LLM_PROVIDER", "groq").strip().lower()
+
+if PROVIDER not in PROVIDERS:
+    print(
+        f"ERROR: LLM_PROVIDER={PROVIDER} is not supported. "
+        f"Choose one of: {', '.join(PROVIDERS)}.",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
-client = Groq(api_key=API_KEY)
+conf = PROVIDERS[PROVIDER]
+MODEL = os.environ.get(conf["model_var"]) or conf["default_model"]
+API_KEY = os.environ.get(conf["key_var"])
+
+if not API_KEY:
+    print(
+        f"ERROR: {conf['key_var']} is not set, but LLM_PROVIDER={PROVIDER}.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# Import only the SDK we actually need, so students can run this with just one
+# of the two packages installed.
+if PROVIDER == "groq":
+    from groq import Groq
+
+    client = Groq(api_key=API_KEY)
+else:
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=API_KEY)
 
 # The name shown to the MCP client.
-mcp = MCPServer("llm-toolkit", version="1.0.0")
+mcp = MCPServer("llm-toolkit", version="1.1.0")
 
 
 # ---------------------------------------------------------------------------
-# 2. Shared helper - the one place that talks to the LLM
+# 2. Shared helper - the ONLY place that knows which vendor is answering
 #
-#    Swapping providers means editing THIS FUNCTION ONLY. The tools below never
-#    know which model answered them. That separation is the point.
+#    This is the seam. The four tools below call call_llm() and never learn
+#    whether Groq or Claude replied. Swapping vendors, or adding a third one,
+#    touches this function and the PROVIDERS table above. Nothing else.
 # ---------------------------------------------------------------------------
 
 def call_llm(prompt: str, system: str = "", max_tokens: int = 1024) -> str:
     """Send a single-turn message to the model and return the text response."""
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            max_tokens=max_tokens,
-        )
-    except GroqError as exc:
+        if PROVIDER == "groq":
+            # OpenAI-compatible: the system prompt is just another message.
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
+
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content or ""
+
+        # Anthropic: the system prompt is a top-level argument, not a message.
+        kwargs = {
+            "model": MODEL,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            kwargs["system"] = system
+
+        response = client.messages.create(**kwargs)
+        return "".join(b.text for b in response.content if b.type == "text")
+
+    except Exception as exc:
         # Return the error as text so the MCP client can show it to the user
         # instead of the whole tool call blowing up.
-        return f"Groq API error: {exc}"
-
-    return response.choices[0].message.content or ""
+        return f"{PROVIDER} API error: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -143,12 +197,15 @@ def extract_json(text: str, fields: str) -> str:
 
 # ---------------------------------------------------------------------------
 # 4. A resource - read-only data the client can pull in as context
+#
+#    Handy in class: read this before and after flipping LLM_PROVIDER to prove
+#    the backend really changed.
 # ---------------------------------------------------------------------------
 
 @mcp.resource("config://server-info")
 def server_info() -> str:
-    """Show which model this server is running."""
-    return f"llm-toolkit MCP server\nprovider: groq\nmodel: {MODEL}\ntools: 4"
+    """Show which provider and model this server is running."""
+    return f"llm-toolkit MCP server\nprovider: {PROVIDER}\nmodel: {MODEL}\ntools: 4"
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +226,9 @@ def code_review(code: str) -> str:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # Goes to stderr, so it never corrupts the stdio JSON-RPC stream.
+    print(f"llm-toolkit starting: provider={PROVIDER} model={MODEL}", file=sys.stderr)
+
     if "--http" in sys.argv:
         # Remote mode. Endpoint will be http://<host>:<port>/mcp
         mcp.run(
